@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="ja" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  // 1. 設定したいパスワードをここに書く
+  const correctPassword = "yume"; 
+
+  // 2. パスワード入力画面を出す
+  let userInput = prompt("パスワードを入力してください");
+
+  // 3. 判定処理
+  if (userInput !== correctPassword) {
+    alert("パスワードが違います");
+    // パスワードが違う場合は白紙にして画面を表示させない
+    document.write("<h1>アクセス権限がありません</h1>");
+    window.stop();
+  }
+</script>
+    <title>読書リーダー＆エディタ</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=M+PLUS+Rounded+1c:wght@400;700&family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@400;600;700&family=Shippori+Mincho:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- JSZip (for EPUB parsing) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Turndown.js (HTML to Markdown) -->
+    <script src="https://unpkg.com/turndown/dist/turndown.js"></script>
+    <!-- Marked.js (Markdown to HTML) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        serifJP: ['"Shippori Mincho"', '"Noto Serif JP"', 'serif'],
+                        sansJP: ['"Noto Sans JP"', 'sans-serif'],
+                        roundedJP: ['"M PLUS Rounded 1c"', 'sans-serif'],
+                        monoJP: ['"JetBrains Mono"', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom Reader & Editor Styles */
+        .reader-theme-paper { background-color: #fcfbf7; color: #292524; }
+        .reader-theme-warm { background-color: #f4ebd9; color: #432818; }
+        .reader-theme-dark { background-color: #1f2937; color: #f3f4f6; }
+        .reader-theme-night { background-color: #0f172a; color: #cbd5e1; }
+
+        /* Custom scrollbar for editor */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+
+        /* Editable canvas typography rules */
+        #visual-editor:focus { outline: none; }
+        #visual-editor u, #reader-content u { text-decoration: underline; text-underline-offset: 3px; }
+        #visual-editor s, #visual-editor del, #reader-content s, #reader-content del { text-decoration: line-through; }
+        
+        /* Pagebreak marker visual indicator in Visual Editor */
+        .pagebreak-marker {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 1.5rem 0;
+            border-top: 2px dashed #3b82f6;
+            position: relative;
+            user-select: none;
+            content-visibility: auto;
+        }
+        .pagebreak-marker::after {
+            content: "📄 ページ区切り (Page break)";
+            background: #eff6ff;
+            color: #1d4ed8;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.2rem 0.8rem;
+            border-radius: 9999px;
+            border: 1px solid #bfdbfe;
+            position: absolute;
+        }
+    </style>
+</head>
+<body class="h-full bg-slate-100 text-slate-800 font-sans flex flex-col overflow-hidden">
+
+    <!-- Top Application Bar -->
+    <header class="h-14 bg-slate-900 text-white flex items-center justify-between px-3 md:px-5 shrink-0 z-20 shadow-md">
+        <div class="flex items-center gap-2">
+            <!-- Sidebar toggle button -->
+            <button id="toggle-sidebar-btn" onclick="toggleSidebar()" class="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-300 hover:text-white" title="サイドバー切り替え (◀/▶)">
+                <i class="fa-solid fa-bars text-lg"></i>
+            </button>
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-book-open-reader text-indigo-400 text-xl"></i>
+                <h1 class="font-bold text-base md:text-lg tracking-wide hidden sm:block">読む読むくん</h1>
+            </div>
+        </div>
+
+        <!-- Mode Switches -->
+        <div class="flex items-center gap-1 sm:gap-2 bg-slate-800 p-1 rounded-xl border border-slate-700">
+            <button id="mode-edit-btn" onclick="switchMainMode('edit')" class="px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-all bg-indigo-600 text-white shadow">
+                <i class="fa-solid fa-pen-to-square mr-1"></i>エディタ
+            </button>
+            <button id="mode-read-btn" onclick="switchMainMode('read')" class="px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-all text-slate-300 hover:text-white hover:bg-slate-700">
+                <i class="fa-solid fa-book-open mr-1"></i>読書モード
+            </button>
+        </div>
+
+        <!-- Tool Actions -->
+        <div class="flex items-center gap-1 md:gap-2">
+            <!-- Search & Replace -->
+            <button onclick="openFindReplaceModal()" class="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors" title="一括置換">
+                <i class="fa-solid fa-magnifying-glass-arrow-right text-base"></i>
+            </button>
+            <!-- Display Settings -->
+            <button onclick="openSettingsModal()" class="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors" title="表示カスタマイズ">
+                <i class="fa-solid fa-sliders text-base"></i>
+            </button>
+            <!-- File Import dropdown -->
+            <div class="relative inline-block text-left">
+                <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1.5 rounded-lg text-xs md:text-sm font-medium flex items-center gap-1 shadow transition-colors">
+                    <i class="fa-solid fa-file-import"></i>
+                    <span class="hidden md:inline">ファイル読込</span>
+                    <input type="file" id="file-input" accept=".txt,.epub" class="hidden" onchange="handleFileUpload(event)">
+                </label>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace container -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- Sidebar (Bookshelf & Chapters) -->
+        <aside id="sidebar" class="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 transition-all duration-300 z-10 shadow-lg md:shadow-none">
+            <!-- Bookshelf Header -->
+            <div class="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <i class="fa-solid fa-book text-indigo-500"></i> 本棚 (作品一覧)
+                </span>
+                <button onclick="createNewBook()" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold px-2 py-1 rounded border border-indigo-200 transition-colors flex items-center gap-1">
+                    <i class="fa-solid fa-plus"></i> 新規本
+                </button>
+            </div>
+
+            <!-- Books List -->
+            <div id="books-list" class="max-h-40 overflow-y-auto p-2 space-y-1 border-b border-slate-200 bg-slate-50/50">
+                <!-- Dynamic Books items -->
+            </div>
+
+            <!-- Chapters Header -->
+            <div class="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <i class="fa-solid fa-list-ol text-indigo-500"></i> 話（章）一覧
+                </span>
+                <button onclick="createNewChapter()" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold px-2 py-1 rounded border border-indigo-200 transition-colors flex items-center gap-1">
+                    <i class="fa-solid fa-plus"></i> 話追加
+                </button>
+            </div>
+
+            <!-- Chapters List -->
+            <div id="chapters-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+                <!-- Dynamic Chapter items -->
+            </div>
+
+            <!-- Storage status footer -->
+            <div class="p-2 border-t border-slate-100 bg-slate-50 text-[11px] text-slate-400 flex items-center justify-between">
+                <span>自動保存: <strong class="text-emerald-600">ON (LocalStorage)</strong></span>
+                <span id="save-status-tag" class="text-emerald-600 font-medium">保存済み ✓</span>
+            </div>
+        </aside>
+
+        <!-- Content Area -->
+        <main class="flex-1 flex flex-col min-w-0 bg-white relative">
+
+            <!-- EDITOR MODE CONTAINER -->
+            <div id="editor-container" class="flex-1 flex flex-col min-h-0">
+                <!-- Visual Editing Toolbar -->
+                <div class="bg-slate-50 border-b border-slate-200 p-2 flex flex-wrap items-center gap-1.5 text-slate-700 shrink-0 select-none shadow-sm">
+                    
+                    <!-- View toggle sub-buttons -->
+                    <div class="flex items-center bg-slate-200 p-0.5 rounded-lg mr-2 text-xs">
+                        <button id="view-visual-btn" onclick="setEditorSubView('visual')" class="px-2.5 py-1 rounded-md font-medium transition-all bg-white shadow-sm text-slate-800">
+                            ビジュアル
+                        </button>
+                        <button id="view-split-btn" onclick="setEditorSubView('split')" class="px-2.5 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900">
+                            2画面分割
+                        </button>
+                        <button id="view-markdown-btn" onclick="setEditorSubView('markdown')" class="px-2.5 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900">
+                            Markdown
+                        </button>
+                    </div>
+
+                    <div class="h-4 w-px bg-slate-300 mx-0.5"></div>
+
+                    <!-- Bold, Italic, Underline, Strike -->
+                    <div class="flex items-center gap-0.5">
+                        <button onclick="execFormat('bold')" class="p-1.5 hover:bg-slate-200 rounded text-slate-700 font-bold w-8 h-8 flex items-center justify-center" title="太字 (Bold)">
+                            <i class="fa-solid fa-bold"></i>
+                        </button>
+                        <button onclick="execFormat('italic')" class="p-1.5 hover:bg-slate-200 rounded text-slate-700 italic w-8 h-8 flex items-center justify-center" title="斜体 (Italic)">
+                            <i class="fa-solid fa-italic"></i>
+                        </button>
+                        <button onclick="execFormat('underline')" class="p-1.5 hover:bg-slate-200 rounded text-slate-700 underline w-8 h-8 flex items-center justify-center" title="下線 (<u>)">
+                            <i class="fa-solid fa-underline"></i>
+                        </button>
+                        <button onclick="execFormat('strikeThrough')" class="p-1.5 hover:bg-slate-200 rounded text-slate-700 line-through w-8 h-8 flex items-center justify-center" title="取り消し線 (<s>)">
+                            <i class="fa-solid fa-strikethrough"></i>
+                        </button>
+                    </div>
+
+                    <div class="h-4 w-px bg-slate-300 mx-0.5"></div>
+
+                    <!-- Alignment -->
+                    <div class="flex items-center gap-0.5">
+                        <button onclick="setVisualAlign('left')" class="p-1.5 hover:bg-slate-200 rounded text-slate-700 w-8 h-8 flex items-center justify-center" title="左寄せ">
+                            <i class="fa-solid fa-align-left"></i>
+                        </button>
+                        <button onclick="setVisualAlign('center')" class="p-1.5 hover:bg-slate-200 rounded text-slate-700 w-8 h-8 flex items-center justify-center" title="中央揃え">
+                            <i class="fa-solid fa-align-center"></i>
+                        </button>
+                        <button onclick="setVisualAlign('right')" class="p-1.5 hover:bg-slate-200 rounded text-slate-700 w-8 h-8 flex items-center justify-center" title="右寄せ">
+                            <i class="fa-solid fa-align-right"></i>
+                        </button>
+                    </div>
+
+                    <div class="h-4 w-px bg-slate-300 mx-0.5"></div>
+
+                    <!-- Font Size selector -->
+                    <div class="flex items-center gap-1">
+                        <span class="text-xs text-slate-500 font-medium hidden sm:inline"><i class="fa-solid fa-text-height"></i></span>
+                        <select id="editor-font-size-select" onchange="applyFontSize(this.value)" class="text-xs border border-slate-300 rounded px-1.5 py-1 bg-white hover:border-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                            <option value="">文字サイズ</option>
+                            <option value="12">12px (小)</option>
+                            <option value="14">14px (標準)</option>
+                            <option value="18">18px (中)</option>
+                            <option value="24">24px (大)</option>
+                            <option value="32">32px (特大)</option>
+                        </select>
+                    </div>
+
+                    <div class="h-4 w-px bg-slate-300 mx-0.5"></div>
+
+                    <!-- Color Presets + Picker -->
+                    <div class="flex items-center gap-1">
+                        <span class="text-xs text-slate-500 font-medium hidden sm:inline"><i class="fa-solid fa-palette"></i></span>
+                        <button onclick="setVisualColor('#ef4444')" class="w-5 h-5 rounded-full bg-red-500 border border-slate-300 shadow-sm hover:scale-110 transition-transform" title="赤"></button>
+                        <button onclick="setVisualColor('#3b82f6')" class="w-5 h-5 rounded-full bg-blue-500 border border-slate-300 shadow-sm hover:scale-110 transition-transform" title="青"></button>
+                        <button onclick="setVisualColor('#22c55e')" class="w-5 h-5 rounded-full bg-green-500 border border-slate-300 shadow-sm hover:scale-110 transition-transform" title="緑"></button>
+                        <button onclick="setVisualColor('#eab308')" class="w-5 h-5 rounded-full bg-yellow-500 border border-slate-300 shadow-sm hover:scale-110 transition-transform" title="黄"></button>
+                        <button onclick="setVisualColor('#1f2937')" class="w-5 h-5 rounded-full bg-slate-800 border border-slate-300 shadow-sm hover:scale-110 transition-transform" title="黒"></button>
+                        <input type="color" id="custom-color-picker" onchange="setVisualColor(this.value)" class="w-6 h-6 p-0 border-0 rounded cursor-pointer" title="カスタム色選択">
+                    </div>
+
+                    <div class="h-4 w-px bg-slate-300 mx-0.5"></div>
+
+                    <!-- Page break insertion -->
+                    <button onclick="insertPageBreak()" class="ml-auto bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs px-2.5 py-1 rounded-lg font-medium flex items-center gap-1 shadow-sm transition-colors">
+                        <i class="fa-solid fa-page-break text-amber-600"></i>
+                        <span>📄 ページ区切り挿入</span>
+                    </button>
+                </div>
+
+                <!-- Chapter Title input in Editor -->
+                <div class="p-3 bg-white border-b border-slate-200 flex items-center gap-2">
+                    <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">章タイトル:</label>
+                    <input type="text" id="chapter-title-input" oninput="updateChapterTitle(this.value)" class="flex-1 font-bold text-slate-800 text-base md:text-lg border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:outline-none px-1 py-0.5 rounded transition-colors" placeholder="章（話）のタイトルを入力をしてください">
+                </div>
+
+                <!-- Dual Split / Single Editor Container -->
+                <div class="flex-1 flex overflow-hidden relative">
+
+                    <!-- Visual Editor (contenteditable) -->
+                    <div id="visual-editor-wrapper" class="flex-1 flex flex-col min-w-0 bg-white border-r border-slate-200 overflow-y-auto p-4 md:p-8">
+                        <div class="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-2 flex items-center gap-1 select-none">
+                            <i class="fa-solid fa-eye"></i> ビジュアル（UI操作）エディタ
+                        </div>
+                        <div id="visual-editor" contenteditable="true" oninput="onVisualInput()" class="flex-1 min-h-[300px] leading-relaxed text-slate-800 focus:outline-none text-base md:text-lg font-serifJP">
+                            <!-- Editable HTML -->
+                        </div>
+                    </div>
+
+                    <!-- Raw Markdown Textarea -->
+                    <div id="markdown-editor-wrapper" class="flex-1 flex flex-col min-w-0 bg-slate-900 text-slate-100 overflow-hidden p-4">
+                        <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1 select-none">
+                            <i class="fa-solid fa-code"></i> Markdown 直接編集（HTML保持）
+                        </div>
+                        <textarea id="markdown-editor" oninput="onMarkdownInput()" class="flex-1 w-full h-full bg-transparent text-slate-200 font-monoJP text-sm leading-relaxed border-0 resize-none focus:outline-none" placeholder="Markdownソースコード..."></textarea>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- READING MODE CONTAINER -->
+            <div id="reader-container" class="hidden flex-1 flex flex-col h-full overflow-hidden bg-slate-50">
+                <!-- Reader Navigation Top Bar -->
+                <div class="bg-white/80 backdrop-blur border-b border-slate-200 p-3 flex items-center justify-between shrink-0 shadow-sm z-10">
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <span id="reader-book-title" class="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 truncate">本タイトル</span>
+                        <h2 id="reader-chapter-title" class="font-bold text-slate-800 text-sm md:text-base truncate">話タイトル</h2>
+                    </div>
+
+                    <!-- Page Navigation Controls -->
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button id="prev-page-btn" onclick="changePage(-1)" class="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-white text-slate-700 text-xs md:text-sm font-semibold rounded-lg transition-colors flex items-center gap-1">
+                            <i class="fa-solid fa-chevron-left"></i> 前へ
+                        </button>
+                        <span id="page-indicator" class="text-xs font-bold text-slate-600 px-2">1 / 1</span>
+                        <button id="next-page-btn" onclick="changePage(1)" class="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-white text-slate-700 text-xs md:text-sm font-semibold rounded-lg transition-colors flex items-center gap-1">
+                            次へ <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Reader Scroll Content Area -->
+                <div id="reader-viewport" class="flex-1 overflow-y-auto p-4 md:p-12 flex justify-center reader-theme-paper transition-colors duration-300">
+                    <div id="reader-content" class="w-full max-w-3xl min-h-full leading-relaxed tracking-wide transition-all duration-200">
+                        <!-- Rendered Marked HTML -->
+                    </div>
+                </div>
+
+                <!-- Bottom Reader Navigation Footer -->
+                <div class="p-3 bg-white/80 backdrop-blur border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 shrink-0">
+                    <span>キーボードの <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-slate-700">←</kbd> <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-slate-700">→</kbd> キーでページ移動可能</span>
+                    <button onclick="switchMainMode('edit')" class="text-indigo-600 hover:underline font-semibold flex items-center gap-1">
+                        <i class="fa-solid fa-pen-to-square"></i> エディタで編集する
+                    </button>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col border border-slate-100">
+            <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
+                <h3 class="font-bold flex items-center gap-2"><i class="fa-solid fa-sliders text-indigo-400"></i> 表示・読書モード設定</h3>
+                <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-5 space-y-4">
+                <!-- Font family selection -->
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">フォント選択</label>
+                    <select id="setting-font-family" onchange="applyReaderSettings()" class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="font-serifJP">明朝体 (Shippori / Noto Serif)</option>
+                        <option value="font-sansJP">ゴシック体 (Noto Sans)</option>
+                        <option value="font-roundedJP">丸ゴシック (M PLUS Rounded)</option>
+                        <option value="font-monoJP">等幅 (JetBrains Mono)</option>
+                    </select>
+                </div>
+
+                <!-- Font size slider -->
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-xs font-bold text-slate-500 uppercase tracking-wider">文字サイズ</label>
+                        <span id="setting-font-size-val" class="text-xs font-bold text-indigo-600">18px</span>
+                    </div>
+                    <input type="range" id="setting-font-size" min="14" max="36" value="18" oninput="applyReaderSettings()" class="w-full accent-indigo-600">
+                </div>
+
+                <!-- Line height slider -->
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-xs font-bold text-slate-500 uppercase tracking-wider">行間（行高）</label>
+                        <span id="setting-line-height-val" class="text-xs font-bold text-indigo-600">1.8</span>
+                    </div>
+                    <input type="range" id="setting-line-height" min="1.4" max="2.6" step="0.1" value="1.8" oninput="applyReaderSettings()" class="w-full accent-indigo-600">
+                </div>
+
+                <!-- Reader Theme selection -->
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">背景カラーテーマ</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="setReaderTheme('reader-theme-paper')" class="p-2.5 rounded-lg border border-slate-300 bg-[#fcfbf7] text-stone-800 text-xs font-bold flex items-center justify-center gap-1.5 hover:ring-2 ring-indigo-500">
+                            📄 和紙（Paper）
+                        </button>
+                        <button onclick="setReaderTheme('reader-theme-warm')" class="p-2.5 rounded-lg border border-amber-200 bg-[#f4ebd9] text-[#432818] text-xs font-bold flex items-center justify-center gap-1.5 hover:ring-2 ring-indigo-500">
+                            ☕ セピア（Warm）
+                        </button>
+                        <button onclick="setReaderTheme('reader-theme-dark')" class="p-2.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-100 text-xs font-bold flex items-center justify-center gap-1.5 hover:ring-2 ring-indigo-500">
+                            🌙 ダーク（Dark）
+                        </button>
+                        <button onclick="setReaderTheme('reader-theme-night')" class="p-2.5 rounded-lg border border-slate-900 bg-slate-950 text-slate-300 text-xs font-bold flex items-center justify-center gap-1.5 hover:ring-2 ring-indigo-500">
+                            🌃 漆黒（Night）
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="p-3 bg-slate-50 border-t border-slate-100 text-right">
+                <button onclick="closeSettingsModal()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow">完了</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Find & Replace Modal -->
+    <div id="find-replace-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col border border-slate-100">
+            <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
+                <h3 class="font-bold flex items-center gap-2"><i class="fa-solid fa-magnifying-glass-arrow-right text-indigo-400"></i> 単語一括置換</h3>
+                <button onclick="closeFindReplaceModal()" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-5 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">検索文字列</label>
+                    <input type="text" id="find-input" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="検索したい単語">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">置換後文字列</label>
+                    <input type="text" id="replace-input" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="新しい単語">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">適用範囲</label>
+                    <select id="replace-scope" class="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="chapter">現在の話（章）のみ</option>
+                        <option value="book">現在の本（全章）</option>
+                    </select>
+                </div>
+            </div>
+            <div class="p-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+                <button onclick="closeFindReplaceModal()" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg">キャンセル</button>
+                <button onclick="executeFindReplace()" class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow">一括置換を実行</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs md:text-sm font-semibold flex items-center gap-2 transform translate-y-20 opacity-0 transition-all duration-300 z-50 border border-slate-700">
+        <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400"></i>
+        <span id="toast-msg">通知メッセージ</span>
+    </div>
+
+    <script>
+        /* APP STATE MANAGEMENT */
+        const STORAGE_KEY = "reader_editor_app_data_v1";
+
+        let appState = {
+            books: [],
+            currentBookId: null,
+            currentChapterId: null,
+            settings: {
+                fontFamily: "font-serifJP",
+                readerFontSize: 18,
+                lineHeight: 1.8,
+                readerTheme: "reader-theme-paper"
+            }
+        };
+
+        let currentMainMode = "edit"; // 'edit' | 'read'
+        let currentSubView = "split"; // 'visual' | 'split' | 'markdown'
+        let currentPages = [];
+        let currentPageIndex = 0;
+        let isSyncing = false; // Prevents recursive input event loops
+
+        /* TURNDOWN & MARKED SETUP FOR PRESERVING HTML DECORATIONS */
+        const turndownService = new TurndownService({
+            headingStyle: 'atx',
+            codeBlockStyle: 'fenced',
+            emDelimiter: '*'
+        });
+
+        // 1. Tell Turndown to keep essential formatting inline tags intact
+        turndownService.keep(['u', 's', 'strike', 'del', 'sub', 'sup', 'mark']);
+
+        // 2. Custom Rule: Keep Spans with inline styles (font-size, color, background, etc.)
+        turndownService.addRule('preserveStyledSpan', {
+            filter: function (node) {
+                return node.nodeName === 'SPAN' && (node.hasAttribute('style') || node.hasAttribute('class'));
+            },
+            replacement: function (content, node) {
+                const style = node.getAttribute('style');
+                const className = node.getAttribute('class');
+                let attrs = '';
+                if (style) attrs += ` style="${style}"`;
+                if (className) attrs += ` class="${className}"`;
+                return `<span${attrs}>${content}</span>`;
+            }
+        });
+
+        // 3. Custom Rule: Keep Divs/P with alignment or style attributes
+        turndownService.addRule('preserveDivAndPStyle', {
+            filter: function (node) {
+                return (node.nodeName === 'DIV' || node.nodeName === 'P') && (node.hasAttribute('style') || node.hasAttribute('align'));
+            },
+            replacement: function (content, node) {
+                let style = node.getAttribute('style') || '';
+                const align = node.getAttribute('align');
+                if (align && !style.includes('text-align')) {
+                    style += `; text-align: ${align};`;
+                }
+                const tag = node.nodeName.toLowerCase();
+                return `\n\n<${tag}${style ? ` style="${style}"` : ''}>${content}</${tag}>\n\n`;
+            }
+        });
+
+        // 4. Custom Rule: Convert legacy <font color="..." size="..."> tags from execCommand to clean <span style="...">
+        turndownService.addRule('convertFontTag', {
+            filter: 'font',
+            replacement: function (content, node) {
+                const color = node.getAttribute('color');
+                const size = node.getAttribute('size');
+                const style = node.getAttribute('style') || '';
+                let styleParts = style ? [style] : [];
+                if (color) styleParts.push(`color: ${color}`);
+                if (size) {
+                    const sizeMap = { '1': '11px', '2': '13px', '3': '16px', '4': '18px', '5': '24px', '6': '32px', '7': '40px' };
+                    styleParts.push(`font-size: ${sizeMap[size] || size}`);
+                }
+                return `<span style="${styleParts.join('; ')}">${content}</span>`;
+            }
+        });
+
+        // 5. Custom Rule: Keep HTML Page Break Comments
+        turndownService.addRule('preservePageBreakComments', {
+            filter: function (node) {
+                return node.nodeType === 8 && node.nodeValue.trim() === 'pagebreak';
+            },
+            replacement: function () {
+                return '\n\n<!-- pagebreak -->\n\n';
+            }
+        });
+
+        // Configure Marked options
+        marked.use({
+            gfm: true,
+            breaks: true
+        });
+
+        /* INITIALIZATION & DEFAULT DATA */
+        window.onload = function () {
+            loadFromStorage();
+            if (!appState.books || appState.books.length === 0) {
+                loadSampleData();
+            }
+            renderBooksList();
+            renderChaptersList();
+            loadCurrentChapterIntoEditor();
+            applyReaderSettings();
+
+            // Keyboard navigation for reader page switching
+            document.addEventListener('keydown', (e) => {
+                if (currentMainMode === 'read') {
+                    if (e.key === 'ArrowLeft') changePage(-1);
+                    if (e.key === 'ArrowRight') changePage(1);
+                }
+            });
+        };
+
+        function generateId(prefix) {
+            return prefix + '_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        function loadSampleData() {
+            const defaultBook = {
+                id: generateId('book'),
+                title: 'サンプル名作集：銀河への旅',
+                chapters: [
+                    {
+                        id: generateId('chap'),
+                        title: '第一話：装飾テストと旅立ち',
+                        content: `<div style="text-align: center;"><span style="color: #ef4444; font-size: 24px;"><b>銀河鉄道の夜へようこそ</b></span></div>\n\n` +
+                                 `ジョバンニは<u>街の時計台</u>の下で足を止めました。風が通り抜けると、<s>古いポスター</s>がカサカサと鳴りました。\n\n` +
+                                 `<span style="color: #3b82f6; font-size: 18px;">「さあ、きっぷをしっかり持っているかい？」</span>\n\n` +
+                                 `カムパネルラが微笑みながら囁きました。\n\n` +
+                                 `<!-- pagebreak -->\n\n` +
+                                 `<div style="text-align: center;"><span style="color: #22c55e; font-size: 20px;"><b>第二章：星めぐりの歌（2ページ目）</b></span></div>\n\n` +
+                                 `青い光を放つ三角標が、天の川の岸辺に<u>何千も何万も</u>並んでいました。\n\n` +
+                                 `UI操作で指定した<span style="color: #eab308; background-color: #fef08a; font-size: 18px;">「文字色」や「アンダーライン」、「中央揃え」</span>は、Markdown変換を行っても**絶対に消えることはありません**。`
+                    },
+                    {
+                        id: generateId('chap'),
+                        title: '第二話：星の観測所',
+                        content: `### 星の観測所にて\n\n観測所の望遠鏡からは、美しい天の川がくっきりと見えました。`
+                    }
+                ]
+            };
+            appState.books = [defaultBook];
+            appState.currentBookId = defaultBook.id;
+            appState.currentChapterId = defaultBook.chapters[0].id;
+            saveToStorage();
+        }
+
+        /* LOCALSTORAGE PERSISTENCE */
+        function saveToStorage() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+                const statusTag = document.getElementById('save-status-tag');
+                if (statusTag) {
+                    statusTag.textContent = "保存済み ✓";
+                    statusTag.className = "text-emerald-600 font-medium";
+                }
+            } catch (e) {
+                console.error("Storage save failed:", e);
+            }
+        }
+
+        function loadFromStorage() {
+            try {
+                const data = localStorage.getItem(STORAGE_KEY);
+                if (data) {
+                    const parsed = JSON.parse(data);
+                    if (parsed && parsed.books) {
+                        appState = parsed;
+                    }
+                }
+            } catch (e) {
+                console.error("Storage load failed:", e);
+            }
+        }
+
+        /* FILE IMPORT (.TXT & .EPUB) */
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const filename = file.name;
+            const ext = filename.split('.').pop().toLowerCase();
+
+            if (ext === 'txt') {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const text = e.target.result;
+                    addChapterToCurrentBook(filename.replace(/\.txt$/i, ''), text);
+                    showToast(`「${filename}」を読み込みました`, "success");
+                };
+                reader.readAsText(file);
+            } else if (ext === 'epub') {
+                try {
+                    showToast("EPUBを解析中...", "info");
+                    const epubData = await parseEpubFile(file);
+                    
+                    // Create new book from EPUB
+                    const newBook = {
+                        id: generateId('book'),
+                        title: epubData.title || filename.replace(/\.epub$/i, ''),
+                        chapters: epubData.chapters
+                    };
+                    appState.books.push(newBook);
+                    appState.currentBookId = newBook.id;
+                    appState.currentChapterId = newBook.chapters[0].id;
+
+                    saveToStorage();
+                    renderBooksList();
+                    renderChaptersList();
+                    loadCurrentChapterIntoEditor();
+                    showToast(`EPUB「${newBook.title}」を本棚に追加しました！`, "success");
+                } catch (err) {
+                    console.error("EPUB parse error:", err);
+                    showToast("EPUBの読み込みに失敗しました: " + err.message, "error");
+                }
+            }
+            event.target.value = '';
+        }
+
+        async function parseEpubFile(file) {
+            const zip = await JSZip.loadAsync(file);
+            
+            // 1. Get container.xml
+            const containerXmlText = await zip.file("META-INF/container.xml")?.async("string");
+            if (!containerXmlText) throw new Error("META-INF/container.xml が見つかりません");
+            
+            const parser = new DOMParser();
+            const containerDoc = parser.parseFromString(containerXmlText, "text/xml");
+            const rootfilePath = containerDoc.querySelector("rootfile")?.getAttribute("full-path");
+            if (!rootfilePath) throw new Error("OPFファイルのパスが見つかりません");
+
+            // 2. Read OPF file
+            const opfText = await zip.file(rootfilePath)?.async("string");
+            if (!opfText) throw new Error("OPFファイルが読み込めません");
+
+            const opfDoc = parser.parseFromString(opfText, "text/xml");
+            const basePath = rootfilePath.includes('/') ? rootfilePath.substring(0, rootfilePath.lastIndexOf('/') + 1) : '';
+            
+            const epubTitle = opfDoc.querySelector("title")?.textContent?.trim() || file.name.replace(/\.epub$/i, '');
+
+            const manifestItems = {};
+            opfDoc.querySelectorAll("manifest > item").forEach(item => {
+                manifestItems[item.getAttribute("id")] = item.getAttribute("href");
+            });
+
+            const spineRefIds = Array.from(opfDoc.querySelectorAll("spine > itemref"))
+                .map(item => item.getAttribute("idref"));
+
+            const chapters = [];
+            let chapIndex = 1;
+
+            for (const idref of spineRefIds) {
+                const href = manifestItems[idref];
+                if (!href) continue;
+
+                const fullPath = basePath + href;
+                const htmlFile = zip.file(fullPath) || zip.file(href);
+                if (!htmlFile) continue;
+
+                const htmlText = await htmlFile.async("string");
+                const doc = parser.parseFromString(htmlText, "text/html");
+
+                let title = doc.querySelector("h1, h2, h3, title")?.textContent?.trim() || `第${chapIndex}話`;
+                if (title.length > 30) title = title.substring(0, 30) + '...';
+
+                const bodyEl = doc.querySelector("body");
+                let bodyHtml = bodyEl ? bodyEl.innerHTML : htmlText;
+                bodyHtml = bodyHtml.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+
+                // Convert HTML to Markdown preserving styles
+                const markdown = turndownService.turndown(bodyHtml);
+
+                chapters.push({
+                    id: generateId('chap'),
+                    title: title,
+                    content: markdown
+                });
+                chapIndex++;
+            }
+
+            if (chapters.length === 0) {
+                throw new Error("本文テキストが見つかりませんでした");
+            }
+
+            return { title: epubTitle, chapters: chapters };
+        }
+
+        /* VISUAL EDITOR FORMATTING COMMANDS */
+        function execFormat(cmd) {
+            const visualEd = document.getElementById('visual-editor');
+            visualEd.focus();
+            document.execCommand(cmd, false, null);
+            onVisualInput();
+        }
+
+        function setVisualAlign(align) {
+            const visualEd = document.getElementById('visual-editor');
+            visualEd.focus();
+            if (align === 'left') document.execCommand('justifyLeft', false, null);
+            if (align === 'center') document.execCommand('justifyCenter', false, null);
+            if (align === 'right') document.execCommand('justifyRight', false, null);
+            onVisualInput();
+        }
+
+        function applyFontSize(px) {
+            if (!px) return;
+            const visualEd = document.getElementById('visual-editor');
+            visualEd.focus();
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed) {
+                showToast("文字サイズを変更するテキストを選択してください", "info");
+                document.getElementById('editor-font-size-select').value = "";
+                return;
+            }
+
+            document.execCommand('fontSize', false, '7');
+            const fontElements = visualEd.querySelectorAll('font[size="7"]');
+            fontElements.forEach(font => {
+                const span = document.createElement('span');
+                span.style.fontSize = px + 'px';
+                span.innerHTML = font.innerHTML;
+                font.parentNode.replaceChild(span, font);
+            });
+
+            document.getElementById('editor-font-size-select').value = "";
+            onVisualInput();
+        }
+
+        function setVisualColor(color) {
+            const visualEd = document.getElementById('visual-editor');
+            visualEd.focus();
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed) {
+                showToast("色を変更するテキストを選択してください", "info");
+                return;
+            }
+
+            document.execCommand('foreColor', false, color);
+            const fontElements = visualEd.querySelectorAll('font[color]');
+            fontElements.forEach(font => {
+                const span = document.createElement('span');
+                span.style.color = font.getAttribute('color');
+                span.innerHTML = font.innerHTML;
+                font.parentNode.replaceChild(span, font);
+            });
+
+            onVisualInput();
+        }
+
+        function insertPageBreak() {
+            const visualEd = document.getElementById('visual-editor');
+            visualEd.focus();
+            
+            // Insert marker HTML in Visual Editor
+            const pagebreakHtml = `\n<!-- pagebreak -->\n`;
+            document.execCommand('insertHTML', false, pagebreakHtml);
+            onVisualInput();
+            showToast("ページ区切りを挿入しました", "success");
+        }
+
+        /* BI-DIRECTIONAL EDITOR SYNCHRONIZATION */
+        let syncDebounceTimer = null;
+
+        function onVisualInput() {
+            if (isSyncing) return;
+            isSyncing = true;
+
+            const visualEd = document.getElementById('visual-editor');
+            // Convert current visual innerHTML to Markdown preserving HTML tags
+            const rawHtml = visualEd.innerHTML;
+            const markdown = turndownService.turndown(rawHtml);
+
+            document.getElementById('markdown-editor').value = markdown;
+
+            saveCurrentChapterContent(markdown);
+            isSyncing = false;
+        }
+
+        function onMarkdownInput() {
+            if (isSyncing) return;
+            isSyncing = true;
+
+            const markdown = document.getElementById('markdown-editor').value;
+            // Parse Markdown to HTML
+            let html = marked.parse(markdown);
+            
+            // Replace <!-- pagebreak --> with visual indicator banner in Visual Editor
+            html = html.replace(/<!--\s*pagebreak\s*-->/gi, '<div class="pagebreak-marker" contenteditable="false"></div>');
+
+            document.getElementById('visual-editor').innerHTML = html;
+
+            saveCurrentChapterContent(markdown);
+            isSyncing = false;
+        }
+
+        function loadCurrentChapterIntoEditor() {
+            const chapter = getCurrentChapter();
+            if (!chapter) return;
+
+            document.getElementById('chapter-title-input').value = chapter.title || "";
+            document.getElementById('markdown-editor').value = chapter.content || "";
+
+            // Render to visual editor
+            let html = marked.parse(chapter.content || "");
+            html = html.replace(/<!--\s*pagebreak\s*-->/gi, '<div class="pagebreak-marker" contenteditable="false"></div>');
+            document.getElementById('visual-editor').innerHTML = html;
+        }
+
+        function saveCurrentChapterContent(markdownText) {
+            const chapter = getCurrentChapter();
+            if (chapter) {
+                chapter.content = markdownText;
+                const statusTag = document.getElementById('save-status-tag');
+                if (statusTag) {
+                    statusTag.textContent = "保存中...";
+                    statusTag.className = "text-amber-600 font-medium";
+                }
+                clearTimeout(syncDebounceTimer);
+                syncDebounceTimer = setTimeout(() => {
+                    saveToStorage();
+                }, 500);
+            }
+        }
+
+        function updateChapterTitle(newTitle) {
+            const chapter = getCurrentChapter();
+            if (chapter) {
+                chapter.title = newTitle;
+                renderChaptersList();
+                saveToStorage();
+            }
+        }
+
+        /* READING MODE & PAGINATION */
+        function renderReadingMode() {
+            const chapter = getCurrentChapter();
+            const book = getCurrentBook();
+
+            if (!chapter) return;
+
+            document.getElementById('reader-book-title').textContent = book ? book.title : "";
+            document.getElementById('reader-chapter-title').textContent = chapter.title;
+
+            // Split markdown by pagebreak tag
+            const content = chapter.content || "";
+            currentPages = content.split(/<!--\s*pagebreak\s*-->/i);
+            if (currentPages.length === 0) currentPages = [""];
+
+            currentPageIndex = 0;
+            displayPage(currentPageIndex);
+        }
+
+        function displayPage(index) {
+            if (index < 0) index = 0;
+            if (index >= currentPages.length) index = currentPages.length - 1;
+            currentPageIndex = index;
+
+            const pageMarkdown = currentPages[currentPageIndex] || "";
+            const pageHtml = marked.parse(pageMarkdown);
+
+            const readerContent = document.getElementById('reader-content');
+            readerContent.innerHTML = pageHtml;
+
+            // Scroll reader to top
+            document.getElementById('reader-viewport').scrollTop = 0;
+
+            // Update pagination UI controls
+            document.getElementById('page-indicator').textContent = `${currentPageIndex + 1} / ${currentPages.length}`;
+            document.getElementById('prev-page-btn').disabled = (currentPageIndex === 0);
+            document.getElementById('next-page-btn').disabled = (currentPageIndex === currentPages.length - 1);
+        }
+
+        function changePage(delta) {
+            displayPage(currentPageIndex + delta);
+        }
+
+        /* MODE & SUBVIEW SWITCHING */
+        function switchMainMode(mode) {
+            currentMainMode = mode;
+            const editBtn = document.getElementById('mode-edit-btn');
+            const readBtn = document.getElementById('mode-read-btn');
+            const editorContainer = document.getElementById('editor-container');
+            const readerContainer = document.getElementById('reader-container');
+
+            if (mode === 'edit') {
+                editBtn.className = "px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-all bg-indigo-600 text-white shadow";
+                readBtn.className = "px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-all text-slate-300 hover:text-white hover:bg-slate-700";
+                editorContainer.classList.remove('hidden');
+                readerContainer.classList.add('hidden');
+                loadCurrentChapterIntoEditor();
+            } else {
+                readBtn.className = "px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-all bg-indigo-600 text-white shadow";
+                editBtn.className = "px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-all text-slate-300 hover:text-white hover:bg-slate-700";
+                editorContainer.classList.add('hidden');
+                readerContainer.classList.remove('hidden');
+                renderReadingMode();
+            }
+        }
+
+        function setEditorSubView(view) {
+            currentSubView = view;
+            const visualWrapper = document.getElementById('visual-editor-wrapper');
+            const markdownWrapper = document.getElementById('markdown-editor-wrapper');
+
+            const btnVisual = document.getElementById('view-visual-btn');
+            const btnSplit = document.getElementById('view-split-btn');
+            const btnMarkdown = document.getElementById('view-markdown-btn');
+
+            [btnVisual, btnSplit, btnMarkdown].forEach(btn => {
+                btn.className = "px-2.5 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900";
+            });
+
+            if (view === 'visual') {
+                btnVisual.className = "px-2.5 py-1 rounded-md font-medium transition-all bg-white shadow-sm text-slate-800";
+                visualWrapper.classList.remove('hidden');
+                markdownWrapper.classList.add('hidden');
+            } else if (view === 'markdown') {
+                btnMarkdown.className = "px-2.5 py-1 rounded-md font-medium transition-all bg-white shadow-sm text-slate-800";
+                visualWrapper.classList.add('hidden');
+                markdownWrapper.classList.remove('hidden');
+            } else { // split
+                btnSplit.className = "px-2.5 py-1 rounded-md font-medium transition-all bg-white shadow-sm text-slate-800";
+                visualWrapper.classList.remove('hidden');
+                markdownWrapper.classList.remove('hidden');
+            }
+        }
+
+        /* BOOKSHELF & CHAPTER MANAGEMENT */
+        function getCurrentBook() {
+            return appState.books.find(b => b.id === appState.currentBookId) || appState.books[0];
+        }
+
+        function getCurrentChapter() {
+            const book = getCurrentBook();
+            if (!book) return null;
+            return book.chapters.find(c => c.id === appState.currentChapterId) || book.chapters[0];
+        }
+
+        function renderBooksList() {
+            const container = document.getElementById('books-list');
+            container.innerHTML = "";
+
+            appState.books.forEach(book => {
+                const isActive = book.id === appState.currentBookId;
+                const div = document.createElement('div');
+                div.className = `p-2 rounded-lg text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors ${
+                    isActive ? 'bg-indigo-600 text-white shadow' : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                }`;
+
+                div.onclick = () => selectBook(book.id);
+
+                div.innerHTML = `
+                    <div class="flex items-center gap-1.5 truncate flex-1">
+                        <i class="fa-solid fa-book-bookmark ${isActive ? 'text-indigo-200' : 'text-indigo-500'}"></i>
+                        <span class="truncate">${escapeHtml(book.title)}</span>
+                    </div>
+                    <div class="flex items-center gap-1 opacity-80 hover:opacity-100">
+                        <button onclick="event.stopPropagation(); renameBook('${book.id}')" class="p-1 hover:bg-black/10 rounded" title="タイトル変更"><i class="fa-solid fa-pen text-[10px]"></i></button>
+                        ${appState.books.length > 1 ? `<button onclick="event.stopPropagation(); deleteBook('${book.id}')" class="p-1 hover:bg-black/10 rounded" title="削除"><i class="fa-solid fa-trash-can text-[10px]"></i></button>` : ''}
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderChaptersList() {
+            const container = document.getElementById('chapters-list');
+            container.innerHTML = "";
+
+            const book = getCurrentBook();
+            if (!book) return;
+
+            book.chapters.forEach((chap, idx) => {
+                const isActive = chap.id === appState.currentChapterId;
+                const div = document.createElement('div');
+                div.className = `p-2 rounded-lg text-xs font-medium flex items-center justify-between cursor-pointer transition-colors ${
+                    isActive ? 'bg-indigo-50 text-indigo-700 font-bold border border-indigo-200' : 'hover:bg-slate-100 text-slate-700 border border-transparent'
+                }`;
+
+                div.onclick = () => selectChapter(chap.id);
+
+                div.innerHTML = `
+                    <div class="flex items-center gap-2 truncate flex-1">
+                        <span class="text-[10px] text-slate-400 font-mono w-4">${idx + 1}.</span>
+                        <span class="truncate">${escapeHtml(chap.title)}</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        ${book.chapters.length > 1 ? `<button onclick="event.stopPropagation(); deleteChapter('${chap.id}')" class="p-1 text-slate-400 hover:text-red-500 rounded" title="削除"><i class="fa-solid fa-xmark text-xs"></i></button>` : ''}
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function selectBook(bookId) {
+            appState.currentBookId = bookId;
+            const book = getCurrentBook();
+            if (book && book.chapters.length > 0) {
+                appState.currentChapterId = book.chapters[0].id;
+            }
+            renderBooksList();
+            renderChaptersList();
+            if (currentMainMode === 'edit') loadCurrentChapterIntoEditor();
+            else renderReadingMode();
+        }
+
+        function selectChapter(chapId) {
+            appState.currentChapterId = chapId;
+            renderChaptersList();
+            if (currentMainMode === 'edit') loadCurrentChapterIntoEditor();
+            else renderReadingMode();
+        }
+
+        function createNewBook() {
+            const title = prompt("新しい本（作品）のタイトルを入力してください:", "無題の作品");
+            if (!title) return;
+
+            const newBook = {
+                id: generateId('book'),
+                title: title,
+                chapters: [{ id: generateId('chap'), title: "第一話", content: "ここから文章を書き始めましょう。" }]
+            };
+            appState.books.push(newBook);
+            selectBook(newBook.id);
+            saveToStorage();
+            showToast("新しい本を作成しました", "success");
+        }
+
+        function renameBook(bookId) {
+            const book = appState.books.find(b => b.id === bookId);
+            if (!book) return;
+            const newTitle = prompt("本（作品）のタイトルを変更:", book.title);
+            if (newTitle) {
+                book.title = newTitle;
+                renderBooksList();
+                saveToStorage();
+            }
+        }
+
+        function deleteBook(bookId) {
+            if (appState.books.length <= 1) return;
+            appState.books = appState.books.filter(b => b.id !== bookId);
+            appState.currentBookId = appState.books[0].id;
+            appState.currentChapterId = appState.books[0].chapters[0].id;
+            renderBooksList();
+            renderChaptersList();
+            loadCurrentChapterIntoEditor();
+            saveToStorage();
+            showToast("本を削除しました", "info");
+        }
+
+        function createNewChapter() {
+            const book = getCurrentBook();
+            if (!book) return;
+            const title = prompt("新しい話（章）のタイトル:", `第${book.chapters.length + 1}話`);
+            if (!title) return;
+
+            const newChap = {
+                id: generateId('chap'),
+                title: title,
+                content: ""
+            };
+            book.chapters.push(newChap);
+            selectChapter(newChap.id);
+            saveToStorage();
+            showToast("新しい話を追加しました", "success");
+        }
+
+        function addChapterToCurrentBook(title, content) {
+            const book = getCurrentBook();
+            if (!book) return;
+            const newChap = {
+                id: generateId('chap'),
+                title: title,
+                content: content
+            };
+            book.chapters.push(newChap);
+            selectChapter(newChap.id);
+            saveToStorage();
+        }
+
+        function deleteChapter(chapId) {
+            const book = getCurrentBook();
+            if (!book || book.chapters.length <= 1) return;
+            book.chapters = book.chapters.filter(c => c.id !== chapId);
+            appState.currentChapterId = book.chapters[0].id;
+            renderChaptersList();
+            loadCurrentChapterIntoEditor();
+            saveToStorage();
+            showToast("話を削除しました", "info");
+        }
+
+        /* SIDEBAR TOGGLE */
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('-ml-72');
+        }
+
+        /* SETTINGS & THEME MODALS */
+        function openSettingsModal() {
+            document.getElementById('settings-modal').classList.remove('hidden');
+            document.getElementById('setting-font-family').value = appState.settings.fontFamily;
+            document.getElementById('setting-font-size').value = appState.settings.readerFontSize;
+            document.getElementById('setting-font-size-val').textContent = appState.settings.readerFontSize + 'px';
+            document.getElementById('setting-line-height').value = appState.settings.lineHeight;
+            document.getElementById('setting-line-height-val').textContent = appState.settings.lineHeight;
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.add('hidden');
+        }
+
+        function applyReaderSettings() {
+            const fontFam = document.getElementById('setting-font-family').value;
+            const fontSize = document.getElementById('setting-font-size').value;
+            const lineHeight = document.getElementById('setting-line-height').value;
+
+            document.getElementById('setting-font-size-val').textContent = fontSize + 'px';
+            document.getElementById('setting-line-height-val').textContent = lineHeight;
+
+            appState.settings.fontFamily = fontFam;
+            appState.settings.readerFontSize = parseInt(fontSize);
+            appState.settings.lineHeight = parseFloat(lineHeight);
+
+            const readerContent = document.getElementById('reader-content');
+            readerContent.className = `w-full max-w-3xl min-h-full leading-relaxed tracking-wide transition-all duration-200 ${fontFam}`;
+            readerContent.style.fontSize = fontSize + 'px';
+            readerContent.style.lineHeight = lineHeight;
+
+            saveToStorage();
+        }
+
+        function setReaderTheme(themeClass) {
+            appState.settings.readerTheme = themeClass;
+            const viewport = document.getElementById('reader-viewport');
+            viewport.className = `flex-1 overflow-y-auto p-4 md:p-12 flex justify-center transition-colors duration-300 ${themeClass}`;
+            saveToStorage();
+        }
+
+        /* BATCH WORD FIND & REPLACE */
+        function openFindReplaceModal() {
+            document.getElementById('find-replace-modal').classList.remove('hidden');
+        }
+
+        function closeFindReplaceModal() {
+            document.getElementById('find-replace-modal').classList.add('hidden');
+        }
+
+        function executeFindReplace() {
+            const findStr = document.getElementById('find-input').value;
+            const replaceStr = document.getElementById('replace-input').value;
+            const scope = document.getElementById('replace-scope').value;
+
+            if (!findStr) {
+                showToast("検索文字列を入力してください", "error");
+                return;
+            }
+
+            let count = 0;
+            const regex = new RegExp(escapeRegExp(findStr), 'g');
+
+            if (scope === 'chapter') {
+                const chap = getCurrentChapter();
+                if (chap && chap.content) {
+                    const matches = chap.content.match(regex);
+                    count = matches ? matches.length : 0;
+                    chap.content = chap.content.replace(regex, replaceStr);
+                }
+            } else {
+                appState.books.forEach(b => {
+                    b.chapters.forEach(c => {
+                        if (c.content) {
+                            const matches = c.content.match(regex);
+                            if (matches) count += matches.length;
+                            c.content = c.content.replace(regex, replaceStr);
+                        }
+                    });
+                });
+            }
+
+            saveToStorage();
+            loadCurrentChapterIntoEditor();
+            closeFindReplaceModal();
+            showToast(`${count}箇所の文字列を一括置換しました！`, "success");
+        }
+
+        /* HELPER UTILITIES */
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function escapeRegExp(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        function showToast(msg, type = "success") {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-msg');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastMsg.textContent = msg;
+            if (type === 'success') toastIcon.className = "fa-solid fa-circle-check text-emerald-400";
+            else if (type === 'error') toastIcon.className = "fa-solid fa-triangle-exclamation text-rose-400";
+            else toastIcon.className = "fa-solid fa-circle-info text-sky-400";
+
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
